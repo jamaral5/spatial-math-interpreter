@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-math/contracts/interpret-response.schema.json",
+  "title": "Interpret response",
+  "description": "What /interpret returns. Success and failure share ONE flat shape - on an error the three explanation fields are empty strings and errorCode is set. That is a concession to Unity's JsonUtility, which cannot express a discriminated union or an optional nested object: one layout means the C# client has exactly one DTO and checks exactly one field, instead of guessing which of two shapes arrived. Every 2xx, 4xx and 5xx from the Lambda matches this schema; only a failure raised by API Gateway itself (a missing API key, a body rejected by the request validator) will not, and the C# client falls back to a transport-level error there.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "surfaceType",
+    "atThisPoint",
+    "directionalBehavior",
+    "classificationKind",
+    "cached",
+    "errorCode",
+    "errorMessage"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.0" },
+
+    "surfaceType": {
+      "type": "string",
+      "description": "What the surface is as a whole, in plain language. Empty on error."
+    },
+    "atThisPoint": {
+      "type": "string",
+      "description": "What is happening at the clicked point specifically. Empty on error."
+    },
+    "directionalBehavior": {
+      "type": "string",
+      "description": "Which way the surface rises and falls from here. Empty on error."
+    },
+
+    "classificationKind": {
+      "type": "string",
+      "description": "Echoed verbatim from the request's classification.kind. This is NEVER read out of the generated text - whatever the prose says, the label the UI displays is the one Unity's own second-derivative test produced. It is the single most important guarantee in this contract."
+    },
+
+    "cached": {
+      "type": "boolean",
+      "description": "True when served from DynamoDB without calling the model. Useful for confirming the cache is doing its job, since Bedrock is the only usage-billed step."
+    },
+
+    "modelId": { "type": "string", "description": "Which model produced it. Empty on error." },
+    "promptVersion": { "type": "string", "description": "Prompt version that produced the wording." },
+    "requestId": { "type": "string", "description": "Lambda request id. Quote this when searching CloudWatch." },
+
+    "errorCode": {
+      "type": "string",
+      "description": "Empty on success. A stable machine-readable code on failure, so the client can branch without matching on message text.",
+      "enum": [
+        "",
+        "invalid_payload",
+        "model_not_found",
+        "model_access_denied",
+        "model_refused",
+        "model_timeout",
+        "model_unreachable",
+        "model_error",
+        "rate_limited",
+        "response_truncated",
+        "empty_response",
+        "malformed_response"
+      ]
+    },
+    "errorMessage": {
+      "type": "string",
+      "description": "Human-readable reason, safe to show in the UI. Empty on success."
+    }
+  }
+}

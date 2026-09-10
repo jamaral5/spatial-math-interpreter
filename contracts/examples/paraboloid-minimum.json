@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0",
+  "equation": "x^2 + y^2",
+  "point": { "x": 0.0, "y": 0.0, "f": 0.0 },
+  "gradient": {
+    "dfdx": 0.0,
+    "dfdy": 0.0,
+    "magnitude": 0.0,
+    "steepestAscentHeadingDegrees": 0.0
+  },
+  "curvature": {
+    "d2fdx2": 2.0,
+    "d2fdy2": 2.0,
+    "d2fdxdy": 0.0,
+    "discriminant": 4.0
+  },
+  "classification": {
+    "kind": "local minimum",
+    "shape": "bowl",
+    "isCriticalPoint": true
+  },
+  "tangentPlane": { "equation": "f(x, y) = 0.00 + 0.00(x - 0.00) + 0.00(y - 0.00)" },
+  "sampling": { "stepH": 0.05, "domainRange": 5.0, "criticalTolerance": 0.01, "curvatureTolerance": 0.001 }
+}

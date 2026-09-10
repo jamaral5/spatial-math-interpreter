@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-math/contracts/interpret-request.schema.json",
+  "title": "Interpret request",
+  "description": "What Unity POSTs to /interpret. This file is the canonical contract between the two repositories: the Unity project produces it, this backend consumes it, and the request validator in template.yaml is a copy of it trimmed to what API Gateway's draft-4 validator supports. Keep the three in step. Every value here is a FINISHED RESULT computed by the C# math engine - the backend performs no calculation of its own, which is what makes it safe to hand these numbers to a language model.",
+  "type": "object",
+  "required": ["schemaVersion", "equation", "point", "gradient", "curvature", "classification"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Wire format version. Bumped only for a breaking shape change; a mismatch is logged by the backend rather than rejected, so an older Unity build keeps working.",
+      "const": "1.0"
+    },
+    "equation": {
+      "type": "string",
+      "description": "The surface as the student typed it, e.g. 'x^2 - y^2'. UNTRUSTED INPUT: it is user text that ends up inside a prompt, so the backend restricts it to the character set of the supported math grammar before use.",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[0-9a-zA-Z+\\-*/^(),.\\s]+$"
+    },
+    "point": {
+      "type": "object",
+      "description": "The clicked point in MATH coordinates, not Unity's. Unity's world X is x, world Z is y, and world Y is the height f.",
+      "required": ["x", "y", "f"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "f": { "type": "number", "description": "Surface height at (x, y)." }
+      }
+    },
+    "gradient": {
+      "type": "object",
+      "description": "First derivatives, estimated by central difference in SurfaceAnalyzer.",
+      "required": ["dfdx", "dfdy", "magnitude"],
+      "additionalProperties": false,
+      "properties": {
+        "dfdx": { "type": "number", "description": "Slope in the x direction." },
+        "dfdy": { "type": "number", "description": "Slope in the y direction." },
+        "magnitude": { "type": "number", "description": "sqrt(dfdx^2 + dfdy^2) - steepness." },
+        "steepestAscentHeadingDegrees": {
+          "type": "number",
+          "description": "Direction of steepest ascent, degrees anticlockwise from the +x axis. IGNORED by the backend when isCriticalPoint is true, because on level ground the gradient is numerical noise and its direction means nothing. Always present because Unity's JsonUtility cannot omit a field."
+        }
+      }
+    },
+    "curvature": {
+      "type": "object",
+      "description": "Second derivatives - the Hessian - estimated from a 3x3 stencil.",
+      "required": ["d2fdx2", "d2fdy2", "d2fdxdy", "discriminant"],
+      "additionalProperties": false,
+      "properties": {
+        "d2fdx2": { "type": "number" },
+        "d2fdy2": { "type": "number" },
+        "d2fdxdy": { "type": "number", "description": "Mixed partial - the twist in the surface." },
+        "discriminant": { "type": "number", "description": "d2fdx2 * d2fdy2 - d2fdxdy^2. The quantity the second-derivative test reads." }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "description": "The verdict the C# second-derivative test already reached. The backend echoes 'kind' straight back in its response and never derives a classification from the model's text.",
+      "required": ["kind", "shape", "isCriticalPoint"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The finished label in words, e.g. 'saddle point' or 'sloping, curving upward in both directions'.",
+          "minLength": 1
+        },
+        "shape": {
+          "type": "string",
+          "description": "Curvature alone, independent of whether the ground is level.",
+          "enum": ["bowl", "dome", "saddle", "troughOrRidge", "undefined"]
+        },
+        "isCriticalPoint": {
+          "type": "boolean",
+          "description": "Whether the gradient is effectively zero. This gates everything: the second-derivative test only identifies a maximum or minimum AT a critical point, so when this is false the point must not be described as one."
+        }
+      }
+    },
+    "tangentPlane": {
+      "type": "object",
+      "description": "Optional. The equation string TangentPlaneRenderer already formatted for display, passed along so the explanation and the on-screen label cannot disagree.",
+      "additionalProperties": false,
+      "properties": {
+        "equation": { "type": "string" }
+      }
+    },
+    "sampling": {
+      "type": "object",
+      "description": "Optional. The numerical settings the derivatives were measured with. Not used to generate the explanation - it is here so a surprising answer can be traced back to the step size that produced it.",
+      "additionalProperties": false,
+      "properties": {
+        "stepH": { "type": "number", "exclusiveMinimum": 0 },
+        "domainRange": { "type": "number" },
+        "criticalTolerance": { "type": "number" },
+        "curvatureTolerance": { "type": "number" }
+      }
+    }
+  }
+}

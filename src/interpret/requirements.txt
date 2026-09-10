@@ -1,0 +1,6 @@
+# The Bedrock Mantle client. Pulls in httpx2 and pydantic transitively.
+#
+# boto3 is deliberately NOT listed: the Lambda Python runtime already provides it,
+# and bundling a second copy only inflates the package and risks drifting behind the
+# runtime version.
+anthropic>=1.0,<2.0

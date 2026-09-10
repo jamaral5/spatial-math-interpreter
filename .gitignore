@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------
+# Spatial Math - AWS backend
+#
+# This folder is its own repository, separate from the Unity project that
+# contains it. See README.md for why.
+# ---------------------------------------------------------------------
+
+# SAM build output and deployment scratch
+.aws-sam/
+samconfig.local.toml
+packaged.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ---------------------------------------------------------------------
+# Secrets. Nothing in this section should ever reach a commit.
+#
+# The API key in particular: it is written to disk by scripts/get-api-key.sh
+# and pasted into the Unity component, and it is the one credential in this
+# project that maps directly to a bill.
+# ---------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+api-key.txt
+env.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

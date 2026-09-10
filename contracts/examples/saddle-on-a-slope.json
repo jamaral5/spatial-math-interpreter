@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0",
+  "equation": "x^2 - y^2",
+  "point": { "x": 1.0, "y": 1.0, "f": 0.0 },
+  "gradient": {
+    "dfdx": 2.0,
+    "dfdy": -2.0,
+    "magnitude": 2.8284,
+    "steepestAscentHeadingDegrees": 315.0
+  },
+  "curvature": {
+    "d2fdx2": 2.0,
+    "d2fdy2": -2.0,
+    "d2fdxdy": 0.0,
+    "discriminant": -4.0
+  },
+  "classification": {
+    "kind": "sloping, with saddle-like curvature",
+    "shape": "saddle",
+    "isCriticalPoint": false
+  },
+  "tangentPlane": { "equation": "f(x, y) = 0.00 + 2.00(x - 1.00) - 2.00(y - 1.00)" },
+  "sampling": { "stepH": 0.05, "domainRange": 5.0, "criticalTolerance": 0.01, "curvatureTolerance": 0.001 }
+}

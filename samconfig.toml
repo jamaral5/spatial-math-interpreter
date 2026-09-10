@@ -1,0 +1,47 @@
+# SAM deployment settings.
+#
+# Committed on purpose: none of it is secret, and it means `sam deploy` needs no
+# arguments and behaves identically on any machine. The API key and the AWS
+# credentials live outside this file - see README.md.
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "spatial-math-interpret"
+
+[default.build.parameters]
+# Dependencies are compiled inside a Lambda-like Docker container rather than against
+# whatever Python happens to be on this machine. It matters here: the anthropic SDK
+# pulls in packages with compiled components, and a wheel built on Windows will not
+# run on Amazon Linux. Set use_container = false only if you have no Docker and are
+# willing to debug that difference.
+use_container = true
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true          # always show what is about to change before it changes
+resolve_s3 = true                 # let SAM manage its own upload bucket
+region = "us-east-1"
+
+# Parameter overrides. The defaults in template.yaml are the source of truth for what
+# each of these means; this is where you diverge from them.
+#
+# ModelId: VERIFY before the first deploy with scripts/list-models.sh. Bedrock model
+# availability varies by account and region, and a wrong id fails at request time
+# rather than at deploy time.
+parameter_overrides = [
+  "ModelId=anthropic.claude-sonnet-4-20250514-v1:0",
+  "BedrockRegion=us-east-1",
+  "Effort=low",
+  "StageName=dev",
+  "MonthlyQuota=2000",
+]
+
+[default.sync.parameters]
+watch = false
+
+# `sam local invoke` reads this. No cache table, so local runs never touch DynamoDB.
+[default.local_invoke.parameters]
+env_vars = "env.json"

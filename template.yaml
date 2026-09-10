@@ -1,0 +1,326 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Spatial Math - AR Math Interpreter backend.
+
+  One POST /interpret endpoint. Unity's C# math engine computes every number and sends
+  them here; this stack turns those already-correct numbers into a plain-language
+  explanation and caches the result. Nothing in this stack does calculus.
+
+# ---------------------------------------------------------------------------
+# Parameters
+#
+# Everything that might reasonably change between "my laptop" and "the demo" is a
+# parameter, so a redeploy never means editing this file. Override them in
+# samconfig.toml or with `sam deploy --parameter-overrides Key=Value`.
+# ---------------------------------------------------------------------------
+Parameters:
+  ModelId:
+    Type: String
+    Default: anthropic.claude-opus-5
+    Description: >
+      Bedrock model id. Bedrock ids carry an "anthropic." prefix. VERIFY THIS AGAINST
+      YOUR OWN ACCOUNT before the first deploy - run scripts/list-models.sh, which
+      prints the Claude models your account and region can actually invoke. If the
+      default is not in that list, set this to one that is (anthropic.claude-sonnet-5
+      is the usual cheaper fallback).
+
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+    Description: >
+      Region used for Bedrock calls. Often the same region as the stack, but Bedrock
+      model availability is regional, so this is kept separate on purpose.
+
+  Effort:
+    Type: String
+    Default: low
+    AllowedValues: [low, medium, high, xhigh, max]
+    Description: >
+      How hard the model thinks. This endpoint restates numbers it was handed, which
+      is the definition of a simple task, so "low" is the right default - it is the
+      cheapest setting that still writes well. Raise it only if the prose disappoints.
+
+  MaxTokens:
+    Type: Number
+    Default: 1024
+    MinValue: 256
+    MaxValue: 8192
+    Description: >
+      Output ceiling. Deliberately small: the response is three short paragraphs, and
+      a low cap is the simplest guard against a runaway bill.
+
+  PromptVersion:
+    Type: String
+    Default: v1
+    Description: >
+      Bumped whenever the prompt text changes. It is part of the cache key, so a new
+      prompt version invalidates old cached explanations instead of serving stale
+      wording that the current prompt would never produce.
+
+  CacheTtlDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 365
+    Description: How long a cached explanation survives before DynamoDB deletes it.
+
+  StageName:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+
+  ThrottleRateLimit:
+    Type: Number
+    Default: 5
+    Description: >
+      Steady-state requests per second allowed by the usage plan. A human clicking a
+      surface generates well under one, so this is generous for real use and still a
+      hard ceiling on a runaway loop.
+
+  ThrottleBurstLimit:
+    Type: Number
+    Default: 10
+
+  MonthlyQuota:
+    Type: Number
+    Default: 2000
+    Description: >
+      Hard monthly request cap on the API key. This is the real spend guard: Bedrock
+      is the only usage-billed piece of the stack, and nothing can reach it without
+      first passing through this quota.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch retention. Left short so log storage never becomes a cost.
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]        # Graviton: cheaper per ms than x86, same code
+    Timeout: 30
+    MemorySize: 1024              # Also buys CPU. Faster cold start on an SDK import.
+    Tracing: Active               # X-Ray, so a slow request can be attributed
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+
+Resources:
+
+  # -------------------------------------------------------------------------
+  # API Gateway (REST)
+  #
+  # REST rather than the cheaper HTTP API for one specific reason: only REST API
+  # supports request validators. A malformed payload is rejected at the edge and
+  # never becomes a Lambda invocation, which is exactly the "validate before it
+  # costs anything" behaviour this design wants. HTTP API would be ~$2.50/M cheaper
+  # and would forward every piece of junk straight to the function.
+  # -------------------------------------------------------------------------
+  InterpretApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref StageName
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingRateLimit: !Ref ThrottleRateLimit
+          ThrottlingBurstLimit: !Ref ThrottleBurstLimit
+      # CORS matters only for a future WebGL build - a standalone or headset build
+      # does not enforce it. Cheap to set now, annoying to retrofit later.
+      Cors:
+        AllowMethods: "'POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,x-api-key'"
+        AllowOrigin: "'*'"
+      Auth:
+        ApiKeyRequired: true
+        UsagePlan:
+          CreateUsagePlan: PER_API
+          Description: Throttle and monthly cap for the Spatial Math Unity client.
+          Quota:
+            Limit: !Ref MonthlyQuota
+            Period: MONTH
+          Throttle:
+            RateLimit: !Ref ThrottleRateLimit
+            BurstLimit: !Ref ThrottleBurstLimit
+      # The gateway-level contract. This is intentionally strict about the fields the
+      # prompt actually depends on: if Unity ever stops sending a derivative, the
+      # request fails loudly at the edge rather than quietly producing an explanation
+      # built on a missing number.
+      Models:
+        InterpretRequest:
+          type: object
+          required: [schemaVersion, equation, point, gradient, curvature, classification]
+          properties:
+            schemaVersion:
+              type: string
+            equation:
+              type: string
+              minLength: 1
+              maxLength: 256
+            point:
+              type: object
+              required: [x, y, f]
+              properties:
+                x: { type: number }
+                y: { type: number }
+                f: { type: number }
+            gradient:
+              type: object
+              required: [dfdx, dfdy, magnitude]
+              properties:
+                dfdx:      { type: number }
+                dfdy:      { type: number }
+                magnitude: { type: number }
+                steepestAscentHeadingDegrees: { type: number }
+            curvature:
+              type: object
+              required: [d2fdx2, d2fdy2, d2fdxdy, discriminant]
+              properties:
+                d2fdx2:       { type: number }
+                d2fdy2:       { type: number }
+                d2fdxdy:      { type: number }
+                discriminant: { type: number }
+            classification:
+              type: object
+              required: [kind, shape, isCriticalPoint]
+              properties:
+                kind:            { type: string }
+                shape:           { type: string }
+                isCriticalPoint: { type: boolean }
+            tangentPlane:
+              type: object
+              properties:
+                equation: { type: string }
+            sampling:
+              type: object
+              properties:
+                stepH:              { type: number }
+                domainRange:        { type: number }
+                criticalTolerance:  { type: number }
+                curvatureTolerance: { type: number }
+
+  # -------------------------------------------------------------------------
+  # The orchestrator
+  # -------------------------------------------------------------------------
+  InterpretFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-interpret"
+      CodeUri: src/interpret/
+      Handler: app.lambda_handler
+      Description: Turns pre-computed surface geometry into a plain-language explanation.
+      Environment:
+        Variables:
+          MODEL_ID:       !Ref ModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          EFFORT:         !Ref Effort
+          MAX_TOKENS:     !Ref MaxTokens
+          PROMPT_VERSION: !Ref PromptVersion
+          CACHE_TABLE:    !Ref InterpretationTable
+          CACHE_TTL_DAYS: !Ref CacheTtlDays
+      Policies:
+        # Least privilege, split into two statements because the cache and the model
+        # are entirely separate concerns and should fail independently.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref InterpretationTable
+        - Statement:
+            - Sid: InvokeClaudeOnBedrock
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              # Both forms are needed: on-demand access resolves to a foundation-model
+              # ARN, while cross-region access resolves to an inference profile that
+              # then fans out to foundation models in other regions.
+              Resource:
+                - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/*"
+                - !Sub "arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*"
+      Events:
+        Interpret:
+          Type: Api
+          Properties:
+            RestApiId: !Ref InterpretApi
+            Path: /interpret
+            Method: post
+            RequestModel:
+              Model: InterpretRequest
+              Required: true
+              ValidateBody: true
+
+  # Explicit log group purely so retention is set. Without this, Lambda creates the
+  # group implicitly with retention "never expire", which quietly accrues cost forever.
+  InterpretFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-interpret"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # -------------------------------------------------------------------------
+  # Cache + history
+  #
+  # Written with the raw DynamoDB resource rather than SAM's SimpleTable because
+  # SimpleTable supports neither TTL nor a secondary index, and this table needs both.
+  #
+  # Two access patterns:
+  #   1. "Have I explained this exact point before?"  -> get item by pk (the cache)
+  #   2. "What has been asked about this equation?"   -> query the GSI (the history)
+  # -------------------------------------------------------------------------
+  InterpretationTable:
+    Type: AWS::DynamoDB::Table
+    # Retained on stack delete: these rows are the only record of what the app was
+    # asked, and re-earning them costs real Bedrock money.
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      TableName: !Sub "${AWS::StackName}-interpretations"
+      # On-demand: this table is idle almost all the time, and provisioned capacity
+      # would bill around the clock for a demo that runs in bursts.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk         # sha256 over the inputs that change the answer
+          AttributeType: S
+        - AttributeName: equation
+          AttributeType: S
+        - AttributeName: createdAt  # ISO-8601, so lexical sort == chronological sort
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: equation-createdAt-index
+          KeySchema:
+            - AttributeName: equation
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false   # a rebuildable cache does not need backups
+
+Outputs:
+  ApiEndpoint:
+    Description: POST this URL from Unity. Paste it into MathInterpreterClient.endpoint.
+    Value: !Sub "https://${InterpretApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/interpret"
+
+  ApiKeyId:
+    Description: >
+      Id of the generated API key. The key VALUE is deliberately not a CloudFormation
+      output - fetch it with scripts/get-api-key.sh so it never lands in stack history.
+    Value: !Ref InterpretApiApiKey
+
+  TableName:
+    Description: DynamoDB table holding cached explanations and query history.
+    Value: !Ref InterpretationTable
+
+  FunctionName:
+    Value: !Ref InterpretFunction
