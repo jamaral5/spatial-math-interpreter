@@ -78,6 +78,56 @@ Close and reopen your terminal after installing, then check:
 python --version && aws --version && sam --version && docker --version
 ```
 
+`docker --version` only proves the CLI is installed, not that the engine is running.
+The real check is:
+
+```bash
+docker info
+```
+
+### If Docker will not start
+
+Installing Docker Desktop is not the same as provisioning it, and the gap between the
+two produces a genuinely confusing failure: `sam build` reports
+`requires a container runtime`, and Docker Desktop itself says only
+`Docker Desktop is unable to start`, with no log file written at all.
+
+The diagnostic that actually tells you what is wrong:
+
+```bash
+wsl -l -v
+```
+
+You should see **two** distributions — your Linux distro *and* `docker-desktop`. If
+`docker-desktop` is missing, Docker has never completed its first-run setup, which it
+needs administrator rights to do. Symptoms line up: no log file, and a pile of stalled
+`Docker Desktop` processes from repeated launch attempts.
+
+The fix, in order:
+
+1. **Clear the jam.** Repeated launches leave processes stacked up, and they block each
+   other. In PowerShell:
+   ```powershell
+   Get-Process -Name '*docker*' -ErrorAction SilentlyContinue | Stop-Process -Force
+   wsl --shutdown
+   ```
+2. **Launch once, elevated.** Start menu → right-click *Docker Desktop* → **Run as
+   administrator**. This is the step that creates the `docker-desktop` distro.
+3. **Leave it alone** for three to five minutes. It is building that distro from
+   scratch. Clicking again just recreates the pile-up from step 1.
+4. Confirm with `wsl -l -v` that `docker-desktop` now exists, then `docker info`.
+
+If it still fails, Docker Desktop → ⚙ Settings → **Troubleshoot** → **Reset to factory
+defaults**, which reruns provisioning from scratch.
+
+Worth ruling out first, since both are silent failures: virtualisation must be enabled
+in firmware, and WSL 2 must be present. Check both with:
+
+```powershell
+(Get-CimInstance Win32_ComputerSystem).HypervisorPresent   # must be True
+wsl --version
+```
+
 ### Point the CLI at your account
 
 ```bash
