@@ -152,6 +152,8 @@ a demo needs. See the cost section of
 **Set an AWS budget alarm before your first deploy.** It is ten minutes and it is the
 difference between noticing a mistake immediately and noticing it on a statement.
 
+Plan on eventually proposing to UF math department as a supplemental learning material
+
 ---
 
 ## Why this is a separate repository
